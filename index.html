@@ -890,14 +890,29 @@
             gistId = gist.id;
           }
 
-          // Verify we can read it
-          await gistApi.loadGist(token, gistId);
+          // Load remote data
+          const remote = await gistApi.loadGist(token, gistId);
 
-          // Save token and gist ID to settings
-          setData(prev => ({
-            ...prev,
-            settings: { ...prev.settings, githubToken: token, gistId: gistId, autoSync: true }
-          }));
+          // If connecting to existing gist with data, merge it in
+          if (existingGistId && remote && remote.decks && remote.decks.length > 0) {
+            justPulledRef.current = true;
+            setData(prev => ({
+              ...remote,
+              settings: {
+                ...remote.settings,
+                githubToken: token,
+                gistId: gistId,
+                autoSync: true
+              }
+            }));
+            lastSyncedRef.current = JSON.stringify({ folders: remote.folders, decks: remote.decks, progress: remote.progress });
+          } else {
+            // New gist or empty existing — just save credentials
+            setData(prev => ({
+              ...prev,
+              settings: { ...prev.settings, githubToken: token, gistId: gistId, autoSync: true }
+            }));
+          }
 
           setSyncStatus('success');
           setSyncMessage('Connected!');
