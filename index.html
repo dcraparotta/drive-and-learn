@@ -816,7 +816,6 @@
       const pullFromGist = useCallback(async () => {
         const { githubToken, gistId } = data.settings;
         if (!githubToken || !gistId) return;
-        sessionStorage.removeItem('dl_pulled');
 
         try {
           setSyncStatus('syncing');
@@ -835,6 +834,7 @@
             };
             // Write directly to localStorage and reload to guarantee clean state
             saveData(merged);
+            sessionStorage.setItem('dl_pulled', '1');
             window.location.reload();
             return;
           }
@@ -897,6 +897,7 @@
               }
             };
             saveData(merged);
+            sessionStorage.setItem('dl_pulled', '1');
             window.location.reload();
             return gistId;
           } else {
@@ -2434,7 +2435,7 @@
               Back
             </Button>
             <h1 style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)' }}>Settings</h1>
-            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>v2.2</p>
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>v2.3</p>
           </div>
 
           <Card style={{ marginBottom: '20px' }}>
