@@ -779,6 +779,7 @@
 
       // Save data whenever it changes
       useEffect(() => {
+        console.log('[STATE] Data changed:', JSON.stringify({ folders: data.folders?.length, decks: data.decks?.length }));
         saveData(data);
       }, [data]);
 
@@ -828,6 +829,7 @@
           setSyncStatus('syncing');
           setSyncMessage('Pulling...');
           const remote = await gistApi.loadGist(githubToken, gistId);
+          console.log('[SYNC] Pull got remote:', JSON.stringify({ folders: remote?.folders?.length, decks: remote?.decks?.length, items: remote?.decks?.reduce((s,d) => s + d.items.length, 0) }));
           if (remote && remote.decks) {
             // Preserve local sync settings, use everything else from remote
             const merged = {
@@ -839,6 +841,7 @@
                 autoSync: data.settings.autoSync
               }
             };
+            console.log('[SYNC] Setting merged data:', JSON.stringify({ folders: merged.folders?.length, decks: merged.decks?.length }));
             justPulledRef.current = true;
             setData(merged);
             lastSyncedRef.current = JSON.stringify({ folders: merged.folders, decks: merged.decks, progress: merged.progress });
