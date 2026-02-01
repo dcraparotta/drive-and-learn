@@ -775,11 +775,9 @@
       const [syncMessage, setSyncMessage] = useState('');
       const syncTimeoutRef = useRef(null);
       const lastSyncedRef = useRef(null);
-      const justPulledRef = useRef(false);
 
       // Save data whenever it changes
       useEffect(() => {
-        console.log('[STATE] Data changed:', JSON.stringify({ folders: data.folders?.length, decks: data.decks?.length }));
         saveData(data);
       }, [data]);
 
@@ -787,12 +785,6 @@
       useEffect(() => {
         const { githubToken, gistId, autoSync } = data.settings;
         if (!githubToken || !gistId || !autoSync) return;
-
-        // Skip auto-sync if data was just pulled from remote
-        if (justPulledRef.current) {
-          justPulledRef.current = false;
-          return;
-        }
 
         // Don't sync if data is the same as what we last synced
         const dataStr = JSON.stringify({ folders: data.folders, decks: data.decks, progress: data.progress });
@@ -824,12 +816,12 @@
       const pullFromGist = useCallback(async () => {
         const { githubToken, gistId } = data.settings;
         if (!githubToken || !gistId) return;
+        sessionStorage.removeItem('dl_pulled');
 
         try {
           setSyncStatus('syncing');
           setSyncMessage('Pulling...');
           const remote = await gistApi.loadGist(githubToken, gistId);
-          console.log('[SYNC] Pull got remote:', JSON.stringify({ folders: remote?.folders?.length, decks: remote?.decks?.length, items: remote?.decks?.reduce((s,d) => s + d.items.length, 0) }));
           if (remote && remote.decks) {
             // Preserve local sync settings, use everything else from remote
             const merged = {
@@ -841,13 +833,10 @@
                 autoSync: data.settings.autoSync
               }
             };
-            console.log('[SYNC] Setting merged data:', JSON.stringify({ folders: merged.folders?.length, decks: merged.decks?.length }));
-            justPulledRef.current = true;
-            setData(merged);
-            lastSyncedRef.current = JSON.stringify({ folders: merged.folders, decks: merged.decks, progress: merged.progress });
-            setSyncStatus('success');
-            setSyncMessage('Pulled latest');
-            setTimeout(() => setSyncStatus(null), 2000);
+            // Write directly to localStorage and reload to guarantee clean state
+            saveData(merged);
+            window.location.reload();
+            return;
           }
         } catch (err) {
           console.error('Pull failed:', err);
@@ -896,10 +885,9 @@
           // Load remote data
           const remote = await gistApi.loadGist(token, gistId);
 
-          // If connecting to existing gist with data, merge it in
           if (existingGistId && remote && remote.decks && remote.decks.length > 0) {
-            justPulledRef.current = true;
-            setData(prev => ({
+            // Connecting to existing gist with data — save merged data and reload
+            const merged = {
               ...remote,
               settings: {
                 ...remote.settings,
@@ -907,8 +895,10 @@
                 gistId: gistId,
                 autoSync: true
               }
-            }));
-            lastSyncedRef.current = JSON.stringify({ folders: remote.folders, decks: remote.decks, progress: remote.progress });
+            };
+            saveData(merged);
+            window.location.reload();
+            return gistId;
           } else {
             // New gist or empty existing — just save credentials
             setData(prev => ({
@@ -930,10 +920,11 @@
         }
       }, [data]);
 
-      // Pull on first load if sync is configured
+      // Pull on first load if sync is configured (once per session)
       useEffect(() => {
         const { githubToken, gistId } = data.settings;
-        if (githubToken && gistId) {
+        if (githubToken && gistId && !sessionStorage.getItem('dl_pulled')) {
+          sessionStorage.setItem('dl_pulled', '1');
           pullFromGist();
         }
       }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2443,7 +2434,7 @@
               Back
             </Button>
             <h1 style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)' }}>Settings</h1>
-            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>v2.1</p>
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>v2.2</p>
           </div>
 
           <Card style={{ marginBottom: '20px' }}>
