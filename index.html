@@ -250,7 +250,10 @@
           repetitions: 3,
           playbackSpeed: 1,
           selectedVoice: null,
-          sessionLength: 15
+          sessionLength: 15,
+          githubToken: null,
+          gistId: null,
+          autoSync: true
         },
         progress: {}
       };
@@ -261,6 +264,55 @@
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       } catch (e) {
         console.error('Failed to save data:', e);
+      }
+    };
+
+    // ============ GITHUB GIST SYNC ============
+
+    const GIST_FILENAME = 'drive-and-learn-data.json';
+
+    const gistApi = {
+      async createGist(token, data) {
+        const res = await fetch('https://api.github.com/gists', {
+          method: 'POST',
+          headers: {
+            'Authorization': `token ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            description: 'Drive & Learn - App Data',
+            public: false,
+            files: { [GIST_FILENAME]: { content: JSON.stringify(data, null, 2) } }
+          })
+        });
+        if (!res.ok) throw new Error(`Create gist failed: ${res.status}`);
+        return await res.json();
+      },
+
+      async saveGist(token, gistId, data) {
+        const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `token ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            files: { [GIST_FILENAME]: { content: JSON.stringify(data, null, 2) } }
+          })
+        });
+        if (!res.ok) throw new Error(`Save gist failed: ${res.status}`);
+        return await res.json();
+      },
+
+      async loadGist(token, gistId) {
+        const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+          headers: { 'Authorization': `token ${token}` }
+        });
+        if (!res.ok) throw new Error(`Load gist failed: ${res.status}`);
+        const gist = await res.json();
+        const file = gist.files[GIST_FILENAME];
+        if (!file) throw new Error('Data file not found in gist');
+        return JSON.parse(file.content);
       }
     };
 
@@ -713,10 +765,146 @@
       const [currentItem, setCurrentItem] = useState(null);
       const [selectedDecks, setSelectedDecks] = useState([]);
       
+      const [syncStatus, setSyncStatus] = useState(null); // null, 'syncing', 'success', 'error'
+      const [syncMessage, setSyncMessage] = useState('');
+      const syncTimeoutRef = useRef(null);
+      const lastSyncedRef = useRef(null);
+
       // Save data whenever it changes
       useEffect(() => {
         saveData(data);
       }, [data]);
+
+      // Auto-sync to Gist when data changes (debounced)
+      useEffect(() => {
+        const { githubToken, gistId, autoSync } = data.settings;
+        if (!githubToken || !gistId || !autoSync) return;
+
+        // Don't sync if data is the same as what we last synced
+        const dataStr = JSON.stringify({ folders: data.folders, decks: data.decks, progress: data.progress });
+        if (dataStr === lastSyncedRef.current) return;
+
+        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+        syncTimeoutRef.current = setTimeout(async () => {
+          try {
+            setSyncStatus('syncing');
+            await gistApi.saveGist(githubToken, gistId, data);
+            lastSyncedRef.current = dataStr;
+            setSyncStatus('success');
+            setSyncMessage('Synced');
+            setTimeout(() => setSyncStatus(null), 2000);
+          } catch (err) {
+            console.error('Auto-sync failed:', err);
+            setSyncStatus('error');
+            setSyncMessage('Sync failed');
+            setTimeout(() => setSyncStatus(null), 4000);
+          }
+        }, 3000); // 3 second debounce
+
+        return () => {
+          if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+        };
+      }, [data]);
+
+      // Pull from Gist (called on app load and manually)
+      const pullFromGist = useCallback(async () => {
+        const { githubToken, gistId } = data.settings;
+        if (!githubToken || !gistId) return;
+
+        try {
+          setSyncStatus('syncing');
+          setSyncMessage('Pulling...');
+          const remote = await gistApi.loadGist(githubToken, gistId);
+          if (remote && remote.decks) {
+            // Preserve local sync settings, use everything else from remote
+            const merged = {
+              ...remote,
+              settings: {
+                ...remote.settings,
+                githubToken: data.settings.githubToken,
+                gistId: data.settings.gistId,
+                autoSync: data.settings.autoSync
+              }
+            };
+            setData(merged);
+            lastSyncedRef.current = JSON.stringify({ folders: merged.folders, decks: merged.decks, progress: merged.progress });
+            setSyncStatus('success');
+            setSyncMessage('Pulled latest');
+            setTimeout(() => setSyncStatus(null), 2000);
+          }
+        } catch (err) {
+          console.error('Pull failed:', err);
+          setSyncStatus('error');
+          setSyncMessage('Pull failed');
+          setTimeout(() => setSyncStatus(null), 4000);
+        }
+      }, [data.settings]);
+
+      // Push to Gist manually
+      const pushToGist = useCallback(async () => {
+        const { githubToken, gistId } = data.settings;
+        if (!githubToken || !gistId) return;
+
+        try {
+          setSyncStatus('syncing');
+          setSyncMessage('Pushing...');
+          await gistApi.saveGist(githubToken, gistId, data);
+          const dataStr = JSON.stringify({ folders: data.folders, decks: data.decks, progress: data.progress });
+          lastSyncedRef.current = dataStr;
+          setSyncStatus('success');
+          setSyncMessage('Pushed');
+          setTimeout(() => setSyncStatus(null), 2000);
+        } catch (err) {
+          console.error('Push failed:', err);
+          setSyncStatus('error');
+          setSyncMessage('Push failed');
+          setTimeout(() => setSyncStatus(null), 4000);
+        }
+      }, [data]);
+
+      // Setup Gist (create new or connect existing)
+      const setupGist = useCallback(async (token, existingGistId = null) => {
+        try {
+          setSyncStatus('syncing');
+          setSyncMessage('Setting up...');
+
+          let gistId = existingGistId;
+
+          if (!gistId) {
+            // Create new gist
+            const gist = await gistApi.createGist(token, data);
+            gistId = gist.id;
+          }
+
+          // Verify we can read it
+          await gistApi.loadGist(token, gistId);
+
+          // Save token and gist ID to settings
+          setData(prev => ({
+            ...prev,
+            settings: { ...prev.settings, githubToken: token, gistId: gistId, autoSync: true }
+          }));
+
+          setSyncStatus('success');
+          setSyncMessage('Connected!');
+          setTimeout(() => setSyncStatus(null), 2000);
+          return gistId;
+        } catch (err) {
+          console.error('Setup failed:', err);
+          setSyncStatus('error');
+          setSyncMessage('Setup failed: ' + err.message);
+          setTimeout(() => setSyncStatus(null), 4000);
+          throw err;
+        }
+      }, [data]);
+
+      // Pull on first load if sync is configured
+      useEffect(() => {
+        const { githubToken, gistId } = data.settings;
+        if (githubToken && gistId) {
+          pullFromGist();
+        }
+      }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
       const updateSettings = (updates) => {
         setData(prev => ({
@@ -982,6 +1170,18 @@
                 onBack={goHome}
                 data={data}
                 onImport={(imported) => setData(imported)}
+                syncStatus={syncStatus}
+                syncMessage={syncMessage}
+                onSetupGist={setupGist}
+                onPull={pullFromGist}
+                onPush={pushToGist}
+                onDisconnectSync={() => {
+                  setData(prev => ({
+                    ...prev,
+                    settings: { ...prev.settings, githubToken: null, gistId: null, autoSync: true }
+                  }));
+                  lastSyncedRef.current = null;
+                }}
               />
             );
           case 'combine':
@@ -1002,6 +1202,21 @@
 
       return (
         <div style={{ minHeight: '100vh', background: 'var(--bg-primary)' }}>
+          {syncStatus && (
+            <div style={{
+              position: 'fixed', top: '8px', right: '12px', zIndex: 1000,
+              padding: '6px 14px', borderRadius: '20px', fontSize: '12px', fontWeight: 600,
+              background: syncStatus === 'syncing' ? 'var(--bg-elevated)' :
+                syncStatus === 'success' ? 'rgba(0, 221, 136, 0.15)' : 'rgba(255, 68, 102, 0.15)',
+              color: syncStatus === 'syncing' ? 'var(--text-secondary)' :
+                syncStatus === 'success' ? 'var(--success)' : 'var(--danger)',
+              border: `1px solid ${syncStatus === 'syncing' ? 'var(--border)' :
+                syncStatus === 'success' ? 'rgba(0, 221, 136, 0.3)' : 'rgba(255, 68, 102, 0.3)'}`,
+              animation: syncStatus === 'syncing' ? 'pulse 1.5s infinite' : 'fadeIn 0.3s ease-out'
+            }}>
+              {syncStatus === 'syncing' ? '⟳ ' : syncStatus === 'success' ? '✓ ' : '✗ '}{syncMessage}
+            </div>
+          )}
           {renderView()}
         </div>
       );
@@ -2138,10 +2353,15 @@
     };
 
     // Settings View
-    const SettingsView = ({ settings, onUpdate, onBack, data, onImport }) => {
+    const SettingsView = ({ settings, onUpdate, onBack, data, onImport, syncStatus, syncMessage, onSetupGist, onPull, onPush, onDisconnectSync }) => {
       const { voices } = useTTS();
       const fileInputRef = useRef(null);
       const [importStatus, setImportStatus] = useState(null);
+      const [tokenInput, setTokenInput] = useState('');
+      const [gistIdInput, setGistIdInput] = useState('');
+      const [setupMode, setSetupMode] = useState(null); // null, 'new', 'existing'
+      const [setupError, setSetupError] = useState(null);
+      const isConnected = settings.githubToken && settings.gistId;
 
       const voiceOptions = voices.map(v => ({
         value: v.name,
@@ -2306,6 +2526,138 @@
               <p style={{ color: 'var(--danger)', fontSize: '14px', marginTop: '12px' }}>
                 Invalid file. Please select a valid Drive & Learn export.
               </p>
+            )}
+          </Card>
+
+          <Card style={{ marginTop: '20px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--accent)' }}>
+              Cloud Sync
+            </h3>
+
+            {isConnected ? (
+              <div>
+                <p style={{ color: 'var(--success)', fontSize: '14px', marginBottom: '4px', fontWeight: 600 }}>
+                  Connected to GitHub Gist
+                </p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '16px', fontFamily: 'JetBrains Mono, monospace' }}>
+                  Gist: {settings.gistId.slice(0, 12)}...
+                </p>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Auto-sync</span>
+                  <button
+                    onClick={() => onUpdate({ autoSync: !settings.autoSync })}
+                    style={{
+                      width: '44px', height: '24px', borderRadius: '12px', border: 'none', cursor: 'pointer',
+                      background: settings.autoSync ? 'var(--accent)' : 'var(--bg-elevated)',
+                      position: 'relative', transition: 'background 0.2s'
+                    }}
+                  >
+                    <div style={{
+                      width: '18px', height: '18px', borderRadius: '50%', background: 'white',
+                      position: 'absolute', top: '3px',
+                      left: settings.autoSync ? '23px' : '3px',
+                      transition: 'left 0.2s'
+                    }} />
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                  <Button variant="primary" onClick={onPush} style={{ flex: 1 }} disabled={syncStatus === 'syncing'}>
+                    Push
+                  </Button>
+                  <Button variant="default" onClick={onPull} style={{ flex: 1 }} disabled={syncStatus === 'syncing'}>
+                    Pull
+                  </Button>
+                </div>
+
+                <Button
+                  variant="danger"
+                  onClick={() => { if (confirm('Disconnect cloud sync? Your data will stay on this device.')) onDisconnectSync(); }}
+                  style={{ width: '100%' }}
+                >
+                  Disconnect
+                </Button>
+              </div>
+            ) : (
+              <div>
+                <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginBottom: '16px', lineHeight: 1.5 }}>
+                  Sync your data across devices using a private GitHub Gist.
+                  Create content on desktop, then pull it on your phone.
+                </p>
+
+                {!setupMode ? (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <Button variant="primary" onClick={() => setSetupMode('new')} style={{ flex: 1 }}>
+                      New Setup
+                    </Button>
+                    <Button variant="default" onClick={() => setSetupMode('existing')} style={{ flex: 1 }}>
+                      Connect Existing
+                    </Button>
+                  </div>
+                ) : (
+                  <div>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '12px', lineHeight: 1.6 }}>
+                      {setupMode === 'new'
+                        ? 'Paste your GitHub Personal Access Token below. Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token. Select the "gist" scope only.'
+                        : 'Paste your GitHub token and the Gist ID from your other device.'}
+                    </p>
+
+                    <input
+                      type="password"
+                      placeholder="GitHub Token (ghp_...)"
+                      value={tokenInput}
+                      onChange={e => setTokenInput(e.target.value)}
+                      style={{
+                        width: '100%', padding: '12px 14px', borderRadius: '10px', border: '1px solid var(--border)',
+                        background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '14px',
+                        fontFamily: 'JetBrains Mono, monospace', marginBottom: '10px', outline: 'none'
+                      }}
+                    />
+
+                    {setupMode === 'existing' && (
+                      <input
+                        placeholder="Gist ID (e.g. abc123def456...)"
+                        value={gistIdInput}
+                        onChange={e => setGistIdInput(e.target.value)}
+                        style={{
+                          width: '100%', padding: '12px 14px', borderRadius: '10px', border: '1px solid var(--border)',
+                          background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '14px',
+                          fontFamily: 'JetBrains Mono, monospace', marginBottom: '10px', outline: 'none'
+                        }}
+                      />
+                    )}
+
+                    {setupError && (
+                      <p style={{ color: 'var(--danger)', fontSize: '13px', marginBottom: '10px' }}>{setupError}</p>
+                    )}
+
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <Button
+                        variant="primary"
+                        disabled={!tokenInput || (setupMode === 'existing' && !gistIdInput) || syncStatus === 'syncing'}
+                        onClick={async () => {
+                          setSetupError(null);
+                          try {
+                            const gistId = await onSetupGist(tokenInput, setupMode === 'existing' ? gistIdInput : null);
+                            setTokenInput('');
+                            setGistIdInput('');
+                            setSetupMode(null);
+                          } catch (err) {
+                            setSetupError(err.message);
+                          }
+                        }}
+                        style={{ flex: 1 }}
+                      >
+                        {syncStatus === 'syncing' ? 'Connecting...' : 'Connect'}
+                      </Button>
+                      <Button variant="ghost" onClick={() => { setSetupMode(null); setSetupError(null); }}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </Card>
         </div>
