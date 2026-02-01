@@ -1,0 +1,2380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Drive & Learn</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    :root {
+      --bg-primary: #0a0a0f;
+      --bg-secondary: #12121a;
+      --bg-tertiary: #1a1a25;
+      --bg-elevated: #222230;
+      --text-primary: #f5f5f7;
+      --text-secondary: #a0a0b0;
+      --text-muted: #606070;
+      --accent: #00d4aa;
+      --accent-dim: #00a080;
+      --accent-glow: rgba(0, 212, 170, 0.3);
+      --warning: #ffaa00;
+      --danger: #ff4466;
+      --success: #00dd88;
+      --border: #2a2a3a;
+      --radius: 12px;
+      --radius-lg: 20px;
+      --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    body {
+      font-family: 'Outfit', -apple-system, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    #root {
+      min-height: 100vh;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--bg-secondary);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
+    }
+
+    /* Animations */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    @keyframes glow {
+      0%, 100% { box-shadow: 0 0 20px var(--accent-glow); }
+      50% { box-shadow: 0 0 40px var(--accent-glow), 0 0 60px var(--accent-glow); }
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(-20px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    .fade-in {
+      animation: fadeIn 0.3s ease-out;
+    }
+
+    /* Button hover effects */
+    button:hover:not(:disabled) {
+      filter: brightness(1.15);
+      transform: translateY(-1px);
+    }
+    button:active:not(:disabled) {
+      transform: translateY(0px) scale(0.98);
+    }
+    .btn-primary-glow {
+      box-shadow: 0 4px 20px rgba(0, 212, 170, 0.3), 0 0 40px rgba(0, 212, 170, 0.1);
+    }
+    .btn-primary-glow:hover {
+      box-shadow: 0 6px 28px rgba(0, 212, 170, 0.45), 0 0 50px rgba(0, 212, 170, 0.15);
+    }
+
+    /* Touch feedback */
+    .touch-active {
+      transform: scale(0.97);
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    // ============ UTILITIES ============
+
+    // Auto-chunk text into natural phrases
+    const autoChunkText = (text) => {
+      if (!text.trim()) return [];
+      
+      // Split on common phrase boundaries
+      const patterns = [
+        /([,;:])\s+/g,  // After punctuation
+        /\s+(and|or|but|that|which|who|when|where|because|although|however|therefore|moreover|furthermore)\s+/gi,  // Conjunctions
+        /\s*[-–—]\s*/g,  // Dashes
+      ];
+      
+      let chunks = [text];
+      
+      patterns.forEach(pattern => {
+        chunks = chunks.flatMap(chunk => {
+          if (chunk.length <= 50) return [chunk];
+          const parts = chunk.split(pattern).filter(p => p.trim() && p.length > 2);
+          return parts.length > 1 ? parts : [chunk];
+        });
+      });
+      
+      // Further split long chunks (>60 chars) at word boundaries
+      chunks = chunks.flatMap(chunk => {
+        if (chunk.length <= 60) return [chunk.trim()];
+        const words = chunk.split(/\s+/);
+        const result = [];
+        let current = [];
+        let currentLen = 0;
+        
+        words.forEach(word => {
+          if (currentLen + word.length > 50 && current.length > 0) {
+            result.push(current.join(' '));
+            current = [word];
+            currentLen = word.length;
+          } else {
+            current.push(word);
+            currentLen += word.length + 1;
+          }
+        });
+        
+        if (current.length) result.push(current.join(' '));
+        return result;
+      });
+      
+      return chunks.map(c => c.trim()).filter(c => c.length > 0);
+    };
+
+    // Parse recall markers from text
+    const parseRecallMarkers = (text) => {
+      const regex = /\*([^*]+)\*/g;
+      const blanks = [];
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        blanks.push({
+          text: match[1],
+          start: match.index,
+          end: match.index + match[0].length
+        });
+      }
+      return blanks;
+    };
+
+    // Get text with blanks for recall mode (supports *asterisks* and "quotes")
+    const getRecallPrompt = (text) => {
+      return text
+        .replace(/\*([^*]+)\*/g, '[BLANK]')
+        .replace(/"([^"]+)"/g, '[BLANK]');
+    };
+
+    // Get just the key facts (supports *asterisks* and "quotes")
+    const getKeyFacts = (text) => {
+      const asteriskMatches = text.match(/\*([^*]+)\*/g) || [];
+      const quoteMatches = text.match(/"([^"]+)"/g) || [];
+      return [
+        ...asteriskMatches.map(m => m.replace(/\*/g, '')),
+        ...quoteMatches.map(m => m.replace(/"/g, ''))
+      ];
+    };
+
+    // Clean text of markers for display/speech
+    const cleanText = (text) => {
+      return text.replace(/\*/g, '').replace(/"/g, '');
+    };
+
+    // Format time
+    const formatTime = (seconds) => {
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+
+    // Generate unique ID
+    const generateId = () => Math.random().toString(36).substr(2, 9);
+
+    // ============ LOCAL STORAGE ============
+
+    const STORAGE_KEY = 'driveAndLearn_v1';
+
+    const loadData = () => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          // Migration: v1 (no version field) -> v2 (folders)
+          if (!parsed.version) {
+            parsed.version = 2;
+            parsed.folders = [];
+            parsed.decks = (parsed.decks || []).map(deck => ({
+              ...deck,
+              folderId: null
+            }));
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+          }
+          return parsed;
+        }
+      } catch (e) {
+        console.error('Failed to load data:', e);
+      }
+      return {
+        version: 2,
+        folders: [],
+        decks: [],
+        settings: {
+          pauseDuration: 4,
+          recallPauseDuration: 6,
+          repetitions: 3,
+          playbackSpeed: 1,
+          selectedVoice: null,
+          sessionLength: 15
+        },
+        progress: {}
+      };
+    };
+
+    const saveData = (data) => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      } catch (e) {
+        console.error('Failed to save data:', e);
+      }
+    };
+
+    // ============ TTS HOOK ============
+
+    const useTTS = () => {
+      const [voices, setVoices] = useState([]);
+      const [speaking, setSpeaking] = useState(false);
+      const utteranceRef = useRef(null);
+
+      useEffect(() => {
+        const loadVoices = () => {
+          const availableVoices = speechSynthesis.getVoices();
+          // Prioritize male/deeper voices
+          const sorted = availableVoices.sort((a, b) => {
+            const aScore = (a.name.toLowerCase().includes('male') || a.name.toLowerCase().includes('guy') || a.name.toLowerCase().includes('david') || a.name.toLowerCase().includes('james')) ? -1 : 0;
+            const bScore = (b.name.toLowerCase().includes('male') || b.name.toLowerCase().includes('guy') || b.name.toLowerCase().includes('david') || b.name.toLowerCase().includes('james')) ? -1 : 0;
+            return aScore - bScore;
+          });
+          setVoices(sorted);
+        };
+
+        loadVoices();
+        speechSynthesis.onvoiceschanged = loadVoices;
+
+        return () => {
+          speechSynthesis.cancel();
+        };
+      }, []);
+
+      const speak = useCallback((text, voiceName, rate = 1) => {
+        return new Promise((resolve) => {
+          speechSynthesis.cancel();
+          
+          const utterance = new SpeechSynthesisUtterance(text);
+          const voice = voices.find(v => v.name === voiceName) || voices[0];
+          
+          if (voice) utterance.voice = voice;
+          utterance.rate = rate;
+          utterance.pitch = 0.9; // Slightly lower pitch for deeper tone
+          
+          utterance.onend = () => {
+            setSpeaking(false);
+            resolve();
+          };
+          utterance.onerror = () => {
+            setSpeaking(false);
+            resolve();
+          };
+          
+          utteranceRef.current = utterance;
+          setSpeaking(true);
+          speechSynthesis.speak(utterance);
+        });
+      }, [voices]);
+
+      const stop = useCallback(() => {
+        speechSynthesis.cancel();
+        setSpeaking(false);
+      }, []);
+
+      return { voices, speak, stop, speaking };
+    };
+
+    // ============ ICONS ============
+
+    const Icons = {
+      Play: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M8 5v14l11-7z"/>
+        </svg>
+      ),
+      Pause: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+        </svg>
+      ),
+      Skip: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+        </svg>
+      ),
+      Rewind: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M18 18l-8.5-6L18 6v12zM6 6v12h2V6H6z"/>
+        </svg>
+      ),
+      Repeat: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>
+        </svg>
+      ),
+      Plus: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+        </svg>
+      ),
+      Folder: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+        </svg>
+      ),
+      Settings: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+        </svg>
+      ),
+      Back: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+        </svg>
+      ),
+      Edit: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+        </svg>
+      ),
+      Delete: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+        </svg>
+      ),
+      Shuffle: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>
+        </svg>
+      ),
+      Brain: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+        </svg>
+      ),
+      Book: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/>
+        </svg>
+      ),
+      Check: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+        </svg>
+      ),
+      Close: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+        </svg>
+      ),
+      Volume: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+        </svg>
+      ),
+      Speed: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20.38 8.57l-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83z"/>
+        </svg>
+      ),
+      Timer: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61l1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42C16.07 4.74 14.12 4 12 4c-4.97 0-9 4.03-9 9s4.02 9 9 9 9-4.03 9-9c0-2.12-.74-4.07-1.97-5.61zM12 20c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>
+        </svg>
+      ),
+      Merge: () => (
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M17 20.41L18.41 19 15 15.59 13.59 17 17 20.41zM7.5 8H11v5.59L5.59 19 7 20.41l6-6V8h3.5L12 3.5 7.5 8z"/>
+        </svg>
+      )
+    };
+
+    // ============ COMPONENTS ============
+
+    // Button Component
+    const Button = ({ children, variant = 'default', size = 'md', icon, onClick, disabled, className = '', ...props }) => {
+      const baseStyles = {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '8px',
+        border: 'none',
+        borderRadius: '50px',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontFamily: 'inherit',
+        fontWeight: 600,
+        letterSpacing: '0.3px',
+        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        opacity: disabled ? 0.5 : 1,
+      };
+
+      const variants = {
+        default: {
+          background: 'var(--bg-tertiary)',
+          color: 'var(--text-primary)',
+          border: '1px solid var(--border)',
+        },
+        primary: {
+          background: 'linear-gradient(135deg, #00d4aa 0%, #00b894 100%)',
+          color: 'var(--bg-primary)',
+        },
+        danger: {
+          background: 'linear-gradient(135deg, #ff4466 0%, #e63950 100%)',
+          color: 'white',
+        },
+        ghost: {
+          background: 'transparent',
+          color: 'var(--text-secondary)',
+        }
+      };
+
+      const sizes = {
+        sm: { padding: '8px 12px', fontSize: '14px' },
+        md: { padding: '12px 20px', fontSize: '16px' },
+        lg: { padding: '16px 28px', fontSize: '18px' },
+        icon: { padding: '12px', fontSize: '16px' }
+      };
+
+      const glowClass = variant === 'primary' ? 'btn-primary-glow' : '';
+
+      return (
+        <button
+          style={{ ...baseStyles, ...variants[variant], ...sizes[size] }}
+          onClick={onClick}
+          disabled={disabled}
+          className={`${glowClass} ${className}`}
+          {...props}
+        >
+          {icon && icon}
+          {children}
+        </button>
+      );
+    };
+
+    // Card Component
+    const Card = ({ children, onClick, style = {}, className = '' }) => (
+      <div
+        onClick={onClick}
+        className={className}
+        style={{
+          background: 'var(--bg-secondary)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '20px',
+          border: '1px solid var(--border)',
+          cursor: onClick ? 'pointer' : 'default',
+          transition: 'all 0.2s ease',
+          ...style
+        }}
+      >
+        {children}
+      </div>
+    );
+
+    // Input Component
+    const Input = ({ label, ...props }) => (
+      <div style={{ marginBottom: '16px' }}>
+        {label && (
+          <label style={{
+            display: 'block',
+            marginBottom: '8px',
+            color: 'var(--text-secondary)',
+            fontSize: '14px',
+            fontWeight: 500
+          }}>
+            {label}
+          </label>
+        )}
+        <input
+          style={{
+            width: '100%',
+            padding: '12px 16px',
+            background: 'var(--bg-tertiary)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)',
+            color: 'var(--text-primary)',
+            fontSize: '16px',
+            fontFamily: 'inherit',
+            outline: 'none',
+            transition: 'border-color 0.2s'
+          }}
+          {...props}
+        />
+      </div>
+    );
+
+    // Textarea Component
+    const Textarea = ({ label, ...props }) => (
+      <div style={{ marginBottom: '16px' }}>
+        {label && (
+          <label style={{
+            display: 'block',
+            marginBottom: '8px',
+            color: 'var(--text-secondary)',
+            fontSize: '14px',
+            fontWeight: 500
+          }}>
+            {label}
+          </label>
+        )}
+        <textarea
+          style={{
+            width: '100%',
+            padding: '12px 16px',
+            background: 'var(--bg-tertiary)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)',
+            color: 'var(--text-primary)',
+            fontSize: '16px',
+            fontFamily: 'inherit',
+            outline: 'none',
+            resize: 'vertical',
+            minHeight: '120px',
+            lineHeight: 1.6
+          }}
+          {...props}
+        />
+      </div>
+    );
+
+    // Select Component
+    const Select = ({ label, options, value, onChange }) => (
+      <div style={{ marginBottom: '16px' }}>
+        {label && (
+          <label style={{
+            display: 'block',
+            marginBottom: '8px',
+            color: 'var(--text-secondary)',
+            fontSize: '14px',
+            fontWeight: 500
+          }}>
+            {label}
+          </label>
+        )}
+        <select
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '12px 16px',
+            background: 'var(--bg-tertiary)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)',
+            color: 'var(--text-primary)',
+            fontSize: '16px',
+            fontFamily: 'inherit',
+            outline: 'none',
+            cursor: 'pointer'
+          }}
+        >
+          {options.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </div>
+    );
+
+    // Slider Component
+    const Slider = ({ label, value, onChange, min, max, step = 1, suffix = '' }) => (
+      <div style={{ marginBottom: '20px' }}>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          marginBottom: '8px'
+        }}>
+          <label style={{
+            color: 'var(--text-secondary)',
+            fontSize: '14px',
+            fontWeight: 500
+          }}>
+            {label}
+          </label>
+          <span style={{
+            color: 'var(--accent)',
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: '14px'
+          }}>
+            {value}{suffix}
+          </span>
+        </div>
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={e => onChange(Number(e.target.value))}
+          style={{
+            width: '100%',
+            height: '8px',
+            borderRadius: '4px',
+            background: `linear-gradient(to right, var(--accent) 0%, var(--accent) ${((value - min) / (max - min)) * 100}%, var(--bg-tertiary) ${((value - min) / (max - min)) * 100}%, var(--bg-tertiary) 100%)`,
+            outline: 'none',
+            cursor: 'pointer',
+            WebkitAppearance: 'none'
+          }}
+        />
+      </div>
+    );
+
+    // Modal Component
+    const Modal = ({ isOpen, onClose, title, children }) => {
+      if (!isOpen) return null;
+
+      return (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '20px'
+        }} onClick={onClose}>
+          <div
+            className="fade-in"
+            style={{
+              background: 'var(--bg-secondary)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '24px',
+              maxWidth: '500px',
+              width: '100%',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              border: '1px solid var(--border)'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '20px'
+            }}>
+              <h2 style={{ fontSize: '20px', fontWeight: 600 }}>{title}</h2>
+              <Button variant="ghost" size="icon" onClick={onClose}>
+                <Icons.Close />
+              </Button>
+            </div>
+            {children}
+          </div>
+        </div>
+      );
+    };
+
+    // ============ MAIN APP ============
+
+    const App = () => {
+      const [data, setData] = useState(loadData);
+      const [view, setView] = useState('home'); // home, folder, deck, editor, player, settings, combine
+      const [currentFolder, setCurrentFolder] = useState(null);
+      const [currentDeck, setCurrentDeck] = useState(null);
+      const [currentItem, setCurrentItem] = useState(null);
+      const [selectedDecks, setSelectedDecks] = useState([]);
+      
+      // Save data whenever it changes
+      useEffect(() => {
+        saveData(data);
+      }, [data]);
+
+      const updateSettings = (updates) => {
+        setData(prev => ({
+          ...prev,
+          settings: { ...prev.settings, ...updates }
+        }));
+      };
+
+      // Folder CRUD
+      const addFolder = (name) => {
+        const newFolder = {
+          id: generateId(),
+          name,
+          deckIds: [],
+          createdAt: Date.now()
+        };
+        setData(prev => ({
+          ...prev,
+          folders: [...prev.folders, newFolder]
+        }));
+        return newFolder;
+      };
+
+      const updateFolder = (folderId, updates) => {
+        setData(prev => ({
+          ...prev,
+          folders: prev.folders.map(f => f.id === folderId ? { ...f, ...updates } : f)
+        }));
+      };
+
+      const deleteFolder = (folderId) => {
+        setData(prev => ({
+          ...prev,
+          folders: prev.folders.filter(f => f.id !== folderId),
+          decks: prev.decks.filter(d => d.folderId !== folderId)
+        }));
+      };
+
+      // Deck CRUD
+      const addDeck = (name, folderId = null) => {
+        const newDeck = {
+          id: generateId(),
+          name,
+          folderId,
+          items: [],
+          createdAt: Date.now()
+        };
+        setData(prev => {
+          const newData = {
+            ...prev,
+            decks: [...prev.decks, newDeck]
+          };
+          if (folderId) {
+            newData.folders = prev.folders.map(f =>
+              f.id === folderId
+                ? { ...f, deckIds: [...f.deckIds, newDeck.id] }
+                : f
+            );
+          }
+          return newData;
+        });
+        return newDeck;
+      };
+
+      const updateDeck = (deckId, updates) => {
+        setData(prev => ({
+          ...prev,
+          decks: prev.decks.map(d => d.id === deckId ? { ...d, ...updates } : d)
+        }));
+      };
+
+      const deleteDeck = (deckId) => {
+        setData(prev => {
+          const deck = prev.decks.find(d => d.id === deckId);
+          return {
+            ...prev,
+            decks: prev.decks.filter(d => d.id !== deckId),
+            folders: deck?.folderId
+              ? prev.folders.map(f =>
+                  f.id === deck.folderId
+                    ? { ...f, deckIds: f.deckIds.filter(id => id !== deckId) }
+                    : f
+                )
+              : prev.folders
+          };
+        });
+      };
+
+      const addItem = (deckId, content) => {
+        const newItem = {
+          id: generateId(),
+          content,
+          chunks: autoChunkText(cleanText(content)),
+          practiceCount: 0,
+          lastPracticed: null,
+          createdAt: Date.now()
+        };
+        setData(prev => ({
+          ...prev,
+          decks: prev.decks.map(d => 
+            d.id === deckId 
+              ? { ...d, items: [...d.items, newItem] }
+              : d
+          )
+        }));
+        return newItem;
+      };
+
+      const updateItem = (deckId, itemId, updates) => {
+        setData(prev => ({
+          ...prev,
+          decks: prev.decks.map(d => 
+            d.id === deckId 
+              ? {
+                  ...d,
+                  items: d.items.map(i => 
+                    i.id === itemId ? { ...i, ...updates } : i
+                  )
+                }
+              : d
+          )
+        }));
+      };
+
+      const deleteItem = (deckId, itemId) => {
+        setData(prev => ({
+          ...prev,
+          decks: prev.decks.map(d => 
+            d.id === deckId 
+              ? { ...d, items: d.items.filter(i => i.id !== itemId) }
+              : d
+          )
+        }));
+      };
+
+      const incrementPractice = (deckId, itemId) => {
+        updateItem(deckId, itemId, {
+          practiceCount: (data.decks.find(d => d.id === deckId)?.items.find(i => i.id === itemId)?.practiceCount || 0) + 1,
+          lastPracticed: Date.now()
+        });
+      };
+
+      // Navigation
+      const goHome = () => {
+        setView('home');
+        setCurrentFolder(null);
+        setCurrentDeck(null);
+        setCurrentItem(null);
+      };
+
+      const openFolder = (folder) => {
+        setCurrentFolder(folder);
+        setView('folder');
+      };
+
+      const openDeck = (deck) => {
+        setCurrentDeck(deck);
+        setView('deck');
+      };
+
+      const openEditor = (item = null) => {
+        setCurrentItem(item);
+        setView('editor');
+      };
+
+      const openPlayer = (mode, shuffled = false) => {
+        setView('player');
+      };
+
+      // Render current view
+      const renderView = () => {
+        switch (view) {
+          case 'home':
+            return (
+              <HomeView
+                folders={data.folders}
+                decks={data.decks}
+                onOpenFolder={openFolder}
+                onOpenDeck={openDeck}
+                onAddFolder={addFolder}
+                onAddDeck={addDeck}
+                onDeleteFolder={deleteFolder}
+                onDeleteDeck={deleteDeck}
+                onOpenSettings={() => setView('settings')}
+                onCombineDecks={() => setView('combine')}
+                selectedDecks={selectedDecks}
+                setSelectedDecks={setSelectedDecks}
+              />
+            );
+          case 'folder':
+            return (
+              <FolderView
+                folder={data.folders.find(f => f.id === currentFolder?.id)}
+                decks={data.decks}
+                onBack={goHome}
+                onOpenDeck={openDeck}
+                onAddDeck={addDeck}
+                onDeleteDeck={deleteDeck}
+              />
+            );
+          case 'deck':
+            const deckData = data.decks.find(d => d.id === currentDeck?.id);
+            const parentFolder = deckData?.folderId
+              ? data.folders.find(f => f.id === deckData.folderId)
+              : null;
+            return (
+              <DeckView
+                deck={deckData}
+                folder={parentFolder}
+                onBack={() => {
+                  if (parentFolder) {
+                    setCurrentFolder(parentFolder);
+                    setView('folder');
+                  } else {
+                    goHome();
+                  }
+                }}
+                onAddItem={openEditor}
+                onEditItem={(item) => openEditor(item)}
+                onDeleteItem={(itemId) => deleteItem(currentDeck.id, itemId)}
+                onPlay={openPlayer}
+                settings={data.settings}
+              />
+            );
+          case 'editor':
+            return (
+              <EditorView
+                deck={data.decks.find(d => d.id === currentDeck.id)}
+                item={currentItem}
+                onBack={() => setView('deck')}
+                onSave={(parsedItems) => {
+                  if (currentItem && parsedItems.length === 1) {
+                    // Editing existing item
+                    updateItem(currentDeck.id, currentItem.id, {
+                      content: parsedItems[0].content,
+                      chunks: parsedItems[0].chunks
+                    });
+                  } else {
+                    // Adding new items (batch)
+                    parsedItems.forEach(({ content, chunks }) => {
+                      const newItem = addItem(currentDeck.id, content);
+                      updateItem(currentDeck.id, newItem.id, { chunks });
+                    });
+                  }
+                  setView('deck');
+                }}
+              />
+            );
+          case 'player':
+            return (
+              <PlayerView
+                deck={data.decks.find(d => d.id === currentDeck.id)}
+                settings={data.settings}
+                onBack={() => setView('deck')}
+                onIncrementPractice={(itemId) => incrementPractice(currentDeck.id, itemId)}
+              />
+            );
+          case 'settings':
+            return (
+              <SettingsView
+                settings={data.settings}
+                onUpdate={updateSettings}
+                onBack={goHome}
+                data={data}
+                onImport={(imported) => setData(imported)}
+              />
+            );
+          case 'combine':
+            return (
+              <CombineView
+                decks={data.decks}
+                selectedDecks={selectedDecks}
+                setSelectedDecks={setSelectedDecks}
+                settings={data.settings}
+                onBack={goHome}
+                onIncrementPractice={incrementPractice}
+              />
+            );
+          default:
+            return <HomeView decks={data.decks} onOpenDeck={openDeck} />;
+        }
+      };
+
+      return (
+        <div style={{ minHeight: '100vh', background: 'var(--bg-primary)' }}>
+          {renderView()}
+        </div>
+      );
+    };
+
+    // ============ VIEWS ============
+
+    // Folder View
+    const FolderView = ({ folder, decks, onBack, onOpenDeck, onAddDeck, onDeleteDeck }) => {
+      const [showNewDeck, setShowNewDeck] = useState(false);
+      const [newDeckName, setNewDeckName] = useState('');
+
+      if (!folder) return null;
+
+      const folderDecks = folder.deckIds
+        .map(id => decks.find(d => d.id === id))
+        .filter(Boolean);
+
+      const totalItems = folderDecks.reduce((sum, d) => sum + d.items.length, 0);
+
+      const handleCreateDeck = () => {
+        if (newDeckName.trim()) {
+          onAddDeck(newDeckName.trim(), folder.id);
+          setNewDeckName('');
+          setShowNewDeck(false);
+        }
+      };
+
+      return (
+        <div className="fade-in" style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
+          <div style={{ marginBottom: '24px', paddingTop: '20px' }}>
+            <Button variant="ghost" onClick={onBack} icon={<Icons.Back />} style={{ marginBottom: '16px' }}>
+              Home
+            </Button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+              <div style={{ color: 'var(--warning)', fontSize: '24px' }}>
+                <Icons.Folder />
+              </div>
+              <h1 style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                {folder.name}
+              </h1>
+            </div>
+            <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
+              {folderDecks.length} deck{folderDecks.length !== 1 ? 's' : ''} • {totalItems} item{totalItems !== 1 ? 's' : ''}
+            </p>
+          </div>
+
+          <Button
+            variant="primary"
+            onClick={() => setShowNewDeck(true)}
+            icon={<Icons.Plus />}
+            style={{ width: '100%', marginBottom: '20px' }}
+          >
+            Add Deck
+          </Button>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {folderDecks.length === 0 ? (
+              <Card style={{ textAlign: 'center', padding: '40px' }}>
+                <Icons.Book />
+                <p style={{ color: 'var(--text-muted)', marginTop: '12px' }}>
+                  No decks yet. Add a deck to get started!
+                </p>
+              </Card>
+            ) : (
+              folderDecks.map((deck, index) => (
+                <Card
+                  key={deck.id}
+                  onClick={() => onOpenDeck(deck)}
+                  style={{
+                    animation: `slideIn 0.3s ease-out ${index * 0.05}s both`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '16px'
+                  }}
+                >
+                  <div style={{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '12px',
+                    background: 'var(--bg-tertiary)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--accent)'
+                  }}>
+                    <Icons.Book />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-primary)' }}>
+                      {deck.name}
+                    </h3>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
+                      {deck.items.length} item{deck.items.length !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm('Delete this deck?')) onDeleteDeck(deck.id);
+                    }}
+                  >
+                    <Icons.Delete />
+                  </Button>
+                </Card>
+              ))
+            )}
+          </div>
+
+          <Modal isOpen={showNewDeck} onClose={() => setShowNewDeck(false)} title="Add Deck">
+            <Input
+              label="Deck Name"
+              placeholder="e.g., Chapter 1: Introduction"
+              value={newDeckName}
+              onChange={e => setNewDeckName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreateDeck()}
+              autoFocus
+            />
+            <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
+              <Button variant="default" onClick={() => setShowNewDeck(false)} style={{ flex: 1 }}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={handleCreateDeck} style={{ flex: 1 }}>
+                Create
+              </Button>
+            </div>
+          </Modal>
+        </div>
+      );
+    };
+
+    // Home View
+    const HomeView = ({ folders, decks, onOpenFolder, onOpenDeck, onAddFolder, onAddDeck, onDeleteFolder, onDeleteDeck, onOpenSettings, onCombineDecks, selectedDecks, setSelectedDecks }) => {
+      const [showNewDeck, setShowNewDeck] = useState(false);
+      const [showNewFolder, setShowNewFolder] = useState(false);
+      const [newDeckName, setNewDeckName] = useState('');
+      const [newFolderName, setNewFolderName] = useState('');
+      const [selectMode, setSelectMode] = useState(false);
+
+      const orphanDecks = decks.filter(d => d.folderId === null);
+
+      const handleCreateDeck = () => {
+        if (newDeckName.trim()) {
+          onAddDeck(newDeckName.trim());
+          setNewDeckName('');
+          setShowNewDeck(false);
+        }
+      };
+
+      const handleCreateFolder = () => {
+        if (newFolderName.trim()) {
+          onAddFolder(newFolderName.trim());
+          setNewFolderName('');
+          setShowNewFolder(false);
+        }
+      };
+
+      const toggleDeckSelection = (deckId) => {
+        setSelectedDecks(prev =>
+          prev.includes(deckId)
+            ? prev.filter(id => id !== deckId)
+            : [...prev, deckId]
+        );
+      };
+
+      const totalItems = decks.reduce((sum, d) => sum + d.items.length, 0);
+      const isEmpty = folders.length === 0 && orphanDecks.length === 0;
+
+      return (
+        <div className="fade-in" style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
+          {/* Header */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '32px',
+            paddingTop: '20px'
+          }}>
+            <div>
+              <h1 style={{
+                fontSize: '28px',
+                fontWeight: 700,
+                background: 'linear-gradient(135deg, var(--text-primary), var(--accent))',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                marginBottom: '4px'
+              }}>
+                Drive & Learn
+              </h1>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
+                {folders.length} folder{folders.length !== 1 ? 's' : ''} • {decks.length} deck{decks.length !== 1 ? 's' : ''} • {totalItems} item{totalItems !== 1 ? 's' : ''}
+              </p>
+            </div>
+            <Button variant="ghost" size="icon" onClick={onOpenSettings}>
+              <Icons.Settings />
+            </Button>
+          </div>
+
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+            <Button
+              variant="primary"
+              onClick={() => setShowNewFolder(true)}
+              icon={<Icons.Folder />}
+              style={{ flex: 1 }}
+            >
+              New Folder
+            </Button>
+            <Button
+              variant="default"
+              onClick={() => setShowNewDeck(true)}
+              icon={<Icons.Plus />}
+              style={{ flex: 1 }}
+            >
+              New Deck
+            </Button>
+            {decks.length > 1 && (
+              <Button
+                variant={selectMode ? 'primary' : 'default'}
+                onClick={() => {
+                  setSelectMode(!selectMode);
+                  if (selectMode) setSelectedDecks([]);
+                }}
+                icon={<Icons.Merge />}
+              >
+                {selectMode ? 'Cancel' : 'Combine'}
+              </Button>
+            )}
+          </div>
+
+          {/* Combine Action */}
+          {selectMode && selectedDecks.length >= 2 && (
+            <Button
+              variant="primary"
+              onClick={() => {
+                setSelectMode(false);
+                onCombineDecks();
+              }}
+              style={{ width: '100%', marginBottom: '20px' }}
+              icon={<Icons.Play />}
+            >
+              Play {selectedDecks.length} Selected Decks
+            </Button>
+          )}
+
+          {/* Content List */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {isEmpty ? (
+              <Card style={{ textAlign: 'center', padding: '40px' }}>
+                <Icons.Folder />
+                <p style={{ color: 'var(--text-muted)', marginTop: '12px' }}>
+                  No content yet. Create a folder or deck to get started!
+                </p>
+              </Card>
+            ) : (
+              <>
+                {/* Folders */}
+                {!selectMode && folders.map((folder, index) => {
+                  const deckCount = folder.deckIds.length;
+                  return (
+                    <Card
+                      key={folder.id}
+                      onClick={() => onOpenFolder(folder)}
+                      style={{
+                        animation: `slideIn 0.3s ease-out ${index * 0.05}s both`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '16px'
+                      }}
+                    >
+                      <div style={{
+                        width: '48px',
+                        height: '48px',
+                        borderRadius: '12px',
+                        background: 'var(--bg-tertiary)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'var(--warning)'
+                      }}>
+                        <Icons.Folder />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-primary)' }}>
+                          {folder.name}
+                        </h3>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
+                          {deckCount} deck{deckCount !== 1 ? 's' : ''}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm('Delete this folder and all its decks?')) onDeleteFolder(folder.id);
+                        }}
+                      >
+                        <Icons.Delete />
+                      </Button>
+                    </Card>
+                  );
+                })}
+
+                {/* Orphan decks (or all decks in select/combine mode) */}
+                {(selectMode ? decks : orphanDecks).map((deck, index) => (
+                  <Card
+                    key={deck.id}
+                    onClick={() => selectMode ? toggleDeckSelection(deck.id) : onOpenDeck(deck)}
+                    style={{
+                      animation: `slideIn 0.3s ease-out ${(folders.length + index) * 0.05}s both`,
+                      border: selectedDecks.includes(deck.id) ? '2px solid var(--accent)' : '1px solid var(--border)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '16px'
+                    }}
+                  >
+                    {selectMode && (
+                      <div style={{
+                        width: '24px',
+                        height: '24px',
+                        borderRadius: '6px',
+                        border: '2px solid var(--border)',
+                        background: selectedDecks.includes(deck.id) ? 'var(--accent)' : 'transparent',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        {selectedDecks.includes(deck.id) && <Icons.Check />}
+                      </div>
+                    )}
+                    <div style={{
+                      width: '48px',
+                      height: '48px',
+                      borderRadius: '12px',
+                      background: 'var(--bg-tertiary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'var(--accent)'
+                    }}>
+                      <Icons.Book />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '4px', color: 'var(--text-primary)' }}>
+                        {deck.name}
+                      </h3>
+                      <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
+                        {deck.items.length} item{deck.items.length !== 1 ? 's' : ''}
+                        {selectMode && deck.folderId ? ' • in folder' : ''}
+                      </p>
+                    </div>
+                    {!selectMode && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm('Delete this deck?')) onDeleteDeck(deck.id);
+                        }}
+                      >
+                        <Icons.Delete />
+                      </Button>
+                    )}
+                  </Card>
+                ))}
+              </>
+            )}
+          </div>
+
+          {/* New Folder Modal */}
+          <Modal
+            isOpen={showNewFolder}
+            onClose={() => setShowNewFolder(false)}
+            title="Create New Folder"
+          >
+            <Input
+              label="Folder Name"
+              placeholder="e.g., The Credit Investors Handbook"
+              value={newFolderName}
+              onChange={e => setNewFolderName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreateFolder()}
+              autoFocus
+            />
+            <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
+              <Button variant="default" onClick={() => setShowNewFolder(false)} style={{ flex: 1 }}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={handleCreateFolder} style={{ flex: 1 }}>
+                Create
+              </Button>
+            </div>
+          </Modal>
+
+          {/* New Deck Modal */}
+          <Modal
+            isOpen={showNewDeck}
+            onClose={() => setShowNewDeck(false)}
+            title="Create New Deck"
+          >
+            <Input
+              label="Deck Name"
+              placeholder="e.g., Economics Chapter 5"
+              value={newDeckName}
+              onChange={e => setNewDeckName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreateDeck()}
+              autoFocus
+            />
+            <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
+              <Button variant="default" onClick={() => setShowNewDeck(false)} style={{ flex: 1 }}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={handleCreateDeck} style={{ flex: 1 }}>
+                Create
+              </Button>
+            </div>
+          </Modal>
+        </div>
+      );
+    };
+
+    // Deck View
+    const DeckView = ({ deck, folder, onBack, onAddItem, onEditItem, onDeleteItem, onPlay, settings }) => {
+      if (!deck) return null;
+
+      return (
+        <div className="fade-in" style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
+          {/* Header */}
+          <div style={{ marginBottom: '24px', paddingTop: '20px' }}>
+            <Button variant="ghost" onClick={onBack} icon={<Icons.Back />} style={{ marginBottom: '16px' }}>
+              {folder ? folder.name : 'Home'}
+            </Button>
+            {folder && (
+              <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '4px' }}>
+                {folder.name} /
+              </p>
+            )}
+            <h1 style={{ fontSize: '24px', fontWeight: 700, marginBottom: '8px', color: 'var(--text-primary)' }}>
+              {deck.name}
+            </h1>
+            <p style={{ color: 'var(--text-muted)' }}>
+              {deck.items.length} item{deck.items.length !== 1 ? 's' : ''}
+            </p>
+          </div>
+
+          {/* Play Buttons */}
+          {deck.items.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '24px' }}>
+              <Button
+                variant="primary"
+                onClick={() => onPlay('learn')}
+                icon={<Icons.Book />}
+                style={{ padding: '20px' }}
+              >
+                Learning Mode
+              </Button>
+              <Button
+                variant="default"
+                onClick={() => onPlay('recall')}
+                icon={<Icons.Brain />}
+                style={{ padding: '20px' }}
+              >
+                Recall Mode
+              </Button>
+            </div>
+          )}
+
+          {/* Add Item Button */}
+          <Button
+            variant="default"
+            onClick={() => onAddItem()}
+            icon={<Icons.Plus />}
+            style={{ width: '100%', marginBottom: '20px' }}
+          >
+            Add Content
+          </Button>
+
+          {/* Item List */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {deck.items.map((item, index) => (
+              <Card
+                key={item.id}
+                style={{ animation: `slideIn 0.3s ease-out ${index * 0.03}s both` }}
+              >
+                <p style={{
+                  fontSize: '15px',
+                  lineHeight: 1.6,
+                  marginBottom: '12px',
+                  color: 'var(--text-primary)'
+                }}>
+                  {item.content.length > 150 ? item.content.slice(0, 150) + '...' : item.content}
+                </p>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <span style={{
+                    fontSize: '13px',
+                    color: 'var(--text-muted)',
+                    fontFamily: "'JetBrains Mono', monospace"
+                  }}>
+                    {item.chunks.length} chunks • {item.practiceCount}x practiced
+                  </span>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <Button variant="ghost" size="icon" onClick={() => onEditItem(item)}>
+                      <Icons.Edit />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => confirm('Delete this item?') && onDeleteItem(item.id)}
+                    >
+                      <Icons.Delete />
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    // Editor View
+    const EditorView = ({ deck, item, onBack, onSave }) => {
+      // When editing, reconstruct text as one chunk per line
+      const initialText = item
+        ? item.chunks.join('\n')
+        : '';
+
+      const [text, setText] = useState(initialText);
+
+      // Parse text into items: blank lines separate items, each line is a chunk
+      const parseItems = (raw) => {
+        const blocks = raw.split(/\n\s*\n/).filter(b => b.trim());
+        return blocks.map(block => {
+          const lines = block.split('\n').filter(l => l.trim());
+          const content = lines.join('\n');
+          const chunks = lines.map(l => cleanText(l.trim()));
+          return { content, chunks };
+        });
+      };
+
+      const parsed = parseItems(text);
+      const totalChunks = parsed.reduce((sum, p) => sum + p.chunks.length, 0);
+      const totalRecall = getKeyFacts(text).length;
+      const hasRecallMarkers = totalRecall > 0;
+
+      return (
+        <div className="fade-in" style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
+          <div style={{ marginBottom: '24px', paddingTop: '20px' }}>
+            <Button variant="ghost" onClick={onBack} icon={<Icons.Back />} style={{ marginBottom: '16px' }}>
+              Cancel
+            </Button>
+            <h1 style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)' }}>
+              {item ? 'Edit Content' : 'Add Content'}
+            </h1>
+          </div>
+
+          {/* Tip box */}
+          <div style={{
+            background: 'var(--bg-tertiary)',
+            borderRadius: 'var(--radius)',
+            padding: '12px 16px',
+            marginBottom: '16px',
+            fontSize: '14px',
+            color: 'var(--text-secondary)',
+            lineHeight: 1.6
+          }}>
+            <strong style={{ color: 'var(--accent)' }}>How it works:</strong>
+            <div style={{ marginTop: '6px' }}>
+              Each line = one chunk (TTS reads it, then pauses).
+            </div>
+            <div>
+              Blank line = separates items (new flashcard).
+            </div>
+            <div>
+              Wrap key facts in "quotes" or *asterisks* for recall blanks.
+            </div>
+          </div>
+
+          {/* Notepad textarea */}
+          <textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            placeholder={'Leveraged finance refers to the use of debt\nIt originated in the 1980s with "junk bonds"\nThe market has grown to over *$3 trillion*\n\nA "leveraged buyout" uses significant debt\nThe company\'s cash flows service the debt\nPrivate equity firms are the primary sponsors'}
+            autoFocus
+            style={{
+              width: '100%',
+              minHeight: '300px',
+              padding: '16px',
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)',
+              color: 'var(--text-primary)',
+              fontSize: '15px',
+              fontFamily: "'JetBrains Mono', monospace",
+              lineHeight: 1.8,
+              resize: 'vertical',
+              outline: 'none',
+              boxSizing: 'border-box'
+            }}
+          />
+
+          {/* Live stats */}
+          {text.trim() && (
+            <div style={{
+              display: 'flex',
+              gap: '16px',
+              padding: '12px 0',
+              fontSize: '13px',
+              fontFamily: "'JetBrains Mono', monospace",
+              color: 'var(--text-muted)'
+            }}>
+              <span>{parsed.length} item{parsed.length !== 1 ? 's' : ''}</span>
+              <span>{totalChunks} chunk{totalChunks !== 1 ? 's' : ''}</span>
+              {hasRecallMarkers && (
+                <span style={{ color: 'var(--success)' }}>{totalRecall} recall blank{totalRecall !== 1 ? 's' : ''}</span>
+              )}
+            </div>
+          )}
+
+          <Button
+            variant="primary"
+            onClick={() => onSave(parsed)}
+            disabled={!text.trim()}
+            style={{ width: '100%', marginTop: '8px' }}
+          >
+            {item ? 'Save' : `Save ${parsed.length} Item${parsed.length !== 1 ? 's' : ''}`}
+          </Button>
+        </div>
+      );
+    };
+
+    // Player View
+    const PlayerView = ({ deck, settings, onBack, onIncrementPractice }) => {
+      const [mode, setMode] = useState(null); // 'learn' or 'recall'
+      const [isPlaying, setIsPlaying] = useState(false);
+      const [isPaused, setIsPaused] = useState(false);
+      const [currentItemIndex, setCurrentItemIndex] = useState(0);
+      const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
+      const [repetitionCount, setRepetitionCount] = useState(0);
+      const [phase, setPhase] = useState('idle'); // idle, speaking, pausing, complete
+      const [sessionTime, setSessionTime] = useState(0);
+      const [showBreakPrompt, setShowBreakPrompt] = useState(false);
+      const [shuffledItems, setShuffledItems] = useState([]);
+      const [displayText, setDisplayText] = useState('');
+
+      const { voices, speak, stop, speaking } = useTTS();
+      const timerRef = useRef(null);
+      const playbackRef = useRef(null);
+
+      // Shuffle function
+      const shuffleArray = (arr) => {
+        const shuffled = [...arr];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled;
+      };
+
+      // Session timer
+      useEffect(() => {
+        if (isPlaying && !isPaused) {
+          timerRef.current = setInterval(() => {
+            setSessionTime(prev => {
+              const newTime = prev + 1;
+              // Check for break prompt every 15 minutes
+              if (newTime > 0 && newTime % (settings.sessionLength * 60) === 0) {
+                setShowBreakPrompt(true);
+                setIsPaused(true);
+              }
+              return newTime;
+            });
+          }, 1000);
+        }
+        return () => clearInterval(timerRef.current);
+      }, [isPlaying, isPaused, settings.sessionLength]);
+
+      // Cleanup on unmount
+      useEffect(() => {
+        return () => {
+          stop();
+          clearTimeout(playbackRef.current);
+        };
+      }, []);
+
+      const items = shuffledItems.length > 0 ? shuffledItems : deck?.items || [];
+      const currentItem = items[currentItemIndex];
+
+      // Start session
+      const startSession = (selectedMode, shuffle = false) => {
+        setMode(selectedMode);
+        if (shuffle) {
+          setShuffledItems(shuffleArray(deck.items));
+        } else {
+          setShuffledItems([...deck.items]);
+        }
+        setIsPlaying(true);
+        setCurrentItemIndex(0);
+        setCurrentChunkIndex(0);
+        setRepetitionCount(0);
+        setPhase('idle');
+        setSessionTime(0);
+      };
+
+      // Play next step
+      const playNext = useCallback(async () => {
+        if (!currentItem || isPaused) return;
+
+        const chunks = currentItem.chunks;
+        const hasRecallMarkers = currentItem.content.includes('*') || currentItem.content.includes('"');
+
+        if (mode === 'learn') {
+          // Learning mode: read all chunks with pauses, repeat N times, then next item
+          for (let rep = 0; rep < settings.repetitions; rep++) {
+            setRepetitionCount(rep);
+
+            for (let c = 0; c < chunks.length; c++) {
+              if (isPaused) return;
+              setCurrentChunkIndex(c);
+
+              // Speak chunk
+              setPhase('speaking');
+              setDisplayText(chunks[c]);
+              await speak(chunks[c], settings.selectedVoice, settings.playbackSpeed);
+
+              // Pause after chunk
+              setPhase('pausing');
+              setDisplayText('Repeat: ' + chunks[c]);
+              await new Promise(resolve => {
+                playbackRef.current = setTimeout(resolve, settings.pauseDuration * 1000);
+              });
+            }
+
+            // Brief pause between repetitions
+            if (rep < settings.repetitions - 1) {
+              setPhase('pausing');
+              setDisplayText(`Repetition ${rep + 2} of ${settings.repetitions}...`);
+              await new Promise(resolve => {
+                playbackRef.current = setTimeout(resolve, 1000);
+              });
+            }
+          }
+
+          // Done with this item, move to next
+          onIncrementPractice(currentItem.id);
+          if (currentItemIndex < items.length - 1) {
+            setCurrentItemIndex(prev => prev + 1);
+            setCurrentChunkIndex(0);
+            setRepetitionCount(0);
+
+            setDisplayText('Next item...');
+            await speak('Next item', settings.selectedVoice, settings.playbackSpeed);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } else {
+            setPhase('complete');
+            setDisplayText('Session complete!');
+            await speak('Session complete. Great work!', settings.selectedVoice, settings.playbackSpeed);
+            setIsPlaying(false);
+            return;
+          }
+        } else if (mode === 'recall') {
+          // Recall mode: read chunks with blanks, pause for recall, reveal answers
+          if (hasRecallMarkers) {
+            // Read each chunk with blanks
+            for (let c = 0; c < chunks.length; c++) {
+              if (isPaused) return;
+              setCurrentChunkIndex(c);
+
+              const chunkContent = currentItem.content.split('\n').filter(l => l.trim())[c] || '';
+              const chunkPrompt = getRecallPrompt(chunkContent);
+              const chunkAnswers = getKeyFacts(chunkContent);
+
+              setPhase('speaking');
+              setDisplayText(chunkPrompt);
+              await speak(chunkPrompt.replace(/\[BLANK\]/g, '... blank ...'), settings.selectedVoice, settings.playbackSpeed);
+
+              if (chunkAnswers.length > 0) {
+                // Pause for recall
+                setPhase('pausing');
+                setDisplayText('Try to recall...');
+                await new Promise(resolve => {
+                  playbackRef.current = setTimeout(resolve, settings.recallPauseDuration * 1000);
+                });
+
+                // Reveal answer
+                setPhase('speaking');
+                const answerText = chunkAnswers.join(', ');
+                setDisplayText('Answer: ' + answerText);
+                await speak('The answer is: ' + answerText, settings.selectedVoice, settings.playbackSpeed);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              } else {
+                // No blanks in this chunk, just pause
+                setPhase('pausing');
+                await new Promise(resolve => {
+                  playbackRef.current = setTimeout(resolve, settings.pauseDuration * 1000);
+                });
+              }
+            }
+
+            // Full clean read-through
+            setPhase('speaking');
+            const fullText = cleanText(currentItem.content);
+            setDisplayText(fullText);
+            await speak(fullText.replace(/\n/g, '. '), settings.selectedVoice, settings.playbackSpeed);
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          } else {
+            // No markers, do learning mode for this item
+            for (let c = 0; c < chunks.length; c++) {
+              if (isPaused) return;
+              setCurrentChunkIndex(c);
+
+              setPhase('speaking');
+              setDisplayText(chunks[c]);
+              await speak(chunks[c], settings.selectedVoice, settings.playbackSpeed);
+
+              setPhase('pausing');
+              await new Promise(resolve => {
+                playbackRef.current = setTimeout(resolve, settings.pauseDuration * 1000);
+              });
+            }
+          }
+
+          // Move to next item
+          onIncrementPractice(currentItem.id);
+          if (currentItemIndex < items.length - 1) {
+            setCurrentItemIndex(prev => prev + 1);
+            setCurrentChunkIndex(0);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } else {
+            setPhase('complete');
+            setDisplayText('Session complete!');
+            await speak('Session complete. Great work!', settings.selectedVoice, settings.playbackSpeed);
+            setIsPlaying(false);
+            return;
+          }
+        }
+      }, [currentItem, mode, settings, isPaused, isPlaying, currentItemIndex, items.length]);
+
+      // Start playback when playing starts or when item changes
+      useEffect(() => {
+        if (isPlaying && !isPaused && (phase === 'idle' || phase === 'pausing')) {
+          playNext();
+        }
+      }, [isPlaying, isPaused, currentItemIndex]);
+
+      // Resume playback
+      const resumePlayback = () => {
+        setIsPaused(false);
+      };
+
+      // Handle gestures
+      const handleTap = () => {
+        if (phase === 'complete') return;
+        if (isPaused) {
+          setIsPaused(false);
+          playNext();
+        } else {
+          setIsPaused(true);
+          stop();
+          clearTimeout(playbackRef.current);
+        }
+      };
+
+      const handleDoubleTap = () => {
+        // Skip to next item
+        stop();
+        clearTimeout(playbackRef.current);
+        if (currentItemIndex < items.length - 1) {
+          setCurrentItemIndex(prev => prev + 1);
+          setCurrentChunkIndex(0);
+          setRepetitionCount(0);
+        }
+      };
+
+      const handleRewind = () => {
+        // Go back to previous item
+        stop();
+        clearTimeout(playbackRef.current);
+        if (currentItemIndex > 0) {
+          setCurrentItemIndex(prev => prev - 1);
+          setCurrentChunkIndex(0);
+          setRepetitionCount(0);
+        }
+      };
+
+      const handleRepeat = () => {
+        // Repeat current item
+        stop();
+        clearTimeout(playbackRef.current);
+        setCurrentChunkIndex(0);
+        setRepetitionCount(0);
+        setPhase('idle');
+      };
+
+      // Mode selection screen
+      if (!mode) {
+        return (
+          <div className="fade-in" style={{
+            padding: '20px',
+            maxWidth: '600px',
+            margin: '0 auto',
+            minHeight: '100vh',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            <Button variant="ghost" onClick={onBack} icon={<Icons.Back />} style={{ alignSelf: 'flex-start', marginTop: '20px' }}>
+              Back
+            </Button>
+            
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '20px' }}>
+              <h1 style={{ fontSize: '24px', fontWeight: 700, textAlign: 'center', marginBottom: '20px' }}>
+                Select Mode
+              </h1>
+              
+              <Card
+                onClick={() => startSession('learn', false)}
+                style={{ cursor: 'pointer', textAlign: 'center', padding: '30px' }}
+              >
+                <div style={{ color: 'var(--accent)', marginBottom: '12px' }}>
+                  <Icons.Book />
+                </div>
+                <h3 style={{ fontSize: '20px', fontWeight: 600, marginBottom: '8px' }}>Learning Mode</h3>
+                <p style={{ color: 'var(--text-muted)' }}>
+                  Chunked playback with pauses for repetition. Best for new material.
+                </p>
+              </Card>
+              
+              <Card
+                onClick={() => startSession('recall', false)}
+                style={{ cursor: 'pointer', textAlign: 'center', padding: '30px' }}
+              >
+                <div style={{ color: 'var(--warning)', marginBottom: '12px' }}>
+                  <Icons.Brain />
+                </div>
+                <h3 style={{ fontSize: '20px', fontWeight: 600, marginBottom: '8px' }}>Recall Mode</h3>
+                <p style={{ color: 'var(--text-muted)' }}>
+                  Prompts with blanks, pause to recall, then reveal. Best for review.
+                </p>
+              </Card>
+              
+              <Button
+                variant="default"
+                onClick={() => startSession('learn', true)}
+                icon={<Icons.Shuffle />}
+                style={{ marginTop: '12px' }}
+              >
+                Shuffle & Learn
+              </Button>
+            </div>
+          </div>
+        );
+      }
+
+      // Player screen
+      return (
+        <div
+          className="fade-in"
+          style={{
+            minHeight: '100vh',
+            display: 'flex',
+            flexDirection: 'column',
+            background: 'var(--bg-primary)',
+            userSelect: 'none'
+          }}
+          onClick={handleTap}
+        >
+          {/* Top bar */}
+          <div style={{
+            padding: '20px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }} onClick={e => e.stopPropagation()}>
+            <Button variant="ghost" onClick={onBack} icon={<Icons.Back />}>
+              Exit
+            </Button>
+            <div style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              color: 'var(--accent)',
+              fontSize: '18px'
+            }}>
+              {formatTime(sessionTime)}
+            </div>
+          </div>
+
+          {/* Progress */}
+          <div style={{ padding: '0 20px' }}>
+            <div style={{
+              height: '4px',
+              background: 'var(--bg-tertiary)',
+              borderRadius: '2px',
+              overflow: 'hidden'
+            }}>
+              <div style={{
+                height: '100%',
+                background: 'var(--accent)',
+                width: `${((currentItemIndex + 1) / items.length) * 100}%`,
+                transition: 'width 0.3s ease'
+              }} />
+            </div>
+            <p style={{
+              textAlign: 'center',
+              color: 'var(--text-muted)',
+              fontSize: '14px',
+              marginTop: '8px'
+            }}>
+              {currentItemIndex + 1} of {items.length} • {mode === 'learn' ? 'Learning' : 'Recall'} Mode
+            </p>
+          </div>
+
+          {/* Main display */}
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '40px 20px',
+            textAlign: 'center'
+          }}>
+            {/* Status indicator */}
+            <div style={{
+              width: '80px',
+              height: '80px',
+              borderRadius: '50%',
+              background: phase === 'pausing' ? 'var(--warning)' : phase === 'speaking' ? 'var(--accent)' : 'var(--bg-tertiary)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: '32px',
+              animation: phase === 'speaking' ? 'pulse 1s infinite' : phase === 'pausing' ? 'glow 2s infinite' : 'none',
+              transition: 'all 0.3s ease'
+            }}>
+              {isPaused ? (
+                <Icons.Pause />
+              ) : phase === 'speaking' ? (
+                <Icons.Volume />
+              ) : phase === 'pausing' ? (
+                <Icons.Timer />
+              ) : (
+                <Icons.Play />
+              )}
+            </div>
+
+            {/* Display text */}
+            <p style={{
+              fontSize: '24px',
+              fontWeight: 500,
+              lineHeight: 1.6,
+              maxWidth: '500px',
+              color: 'var(--text-primary)'
+            }}>
+              {displayText || (isPaused ? 'Paused - Tap to resume' : 'Starting...')}
+            </p>
+
+            {/* Phase label */}
+            <p style={{
+              marginTop: '20px',
+              color: 'var(--text-muted)',
+              fontSize: '16px'
+            }}>
+              {isPaused ? 'PAUSED' : phase === 'speaking' ? 'LISTENING...' : phase === 'pausing' ? 'YOUR TURN - REPEAT' : ''}
+            </p>
+          </div>
+
+          {/* Controls */}
+          <div style={{
+            padding: '20px',
+            display: 'flex',
+            justifyContent: 'center',
+            gap: '16px'
+          }} onClick={e => e.stopPropagation()}>
+            <Button variant="default" size="lg" onClick={handleRewind}>
+              <Icons.Rewind />
+            </Button>
+            <Button variant="default" size="lg" onClick={handleRepeat}>
+              <Icons.Repeat />
+            </Button>
+            <Button variant="default" size="lg" onClick={handleDoubleTap}>
+              <Icons.Skip />
+            </Button>
+          </div>
+
+          {/* Gesture hint */}
+          <p style={{
+            textAlign: 'center',
+            color: 'var(--text-muted)',
+            fontSize: '13px',
+            padding: '12px 20px 30px'
+          }}>
+            Tap anywhere to pause/resume
+          </p>
+
+          {/* Break prompt modal */}
+          <Modal
+            isOpen={showBreakPrompt}
+            onClose={() => {}}
+            title="Time for a Break?"
+          >
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '20px' }}>
+              You've been practicing for {settings.sessionLength} minutes. Would you like to continue or take a break?
+            </p>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <Button
+                variant="default"
+                onClick={() => {
+                  setShowBreakPrompt(false);
+                  onBack();
+                }}
+                style={{ flex: 1 }}
+              >
+                Take a Break
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  setShowBreakPrompt(false);
+                  resumePlayback();
+                }}
+                style={{ flex: 1 }}
+              >
+                Continue
+              </Button>
+            </div>
+          </Modal>
+        </div>
+      );
+    };
+
+    // Settings View
+    const SettingsView = ({ settings, onUpdate, onBack, data, onImport }) => {
+      const { voices } = useTTS();
+      const fileInputRef = useRef(null);
+      const [importStatus, setImportStatus] = useState(null);
+
+      const voiceOptions = voices.map(v => ({
+        value: v.name,
+        label: v.name + (v.lang ? ` (${v.lang})` : '')
+      }));
+
+      const handleExport = () => {
+        const json = JSON.stringify(data, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `drive-and-learn-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+
+      const handleImport = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const imported = JSON.parse(event.target.result);
+            if (!imported.decks || !imported.settings) {
+              setImportStatus('error');
+              return;
+            }
+            onImport(imported);
+            setImportStatus('success');
+            setTimeout(() => setImportStatus(null), 3000);
+          } catch (err) {
+            setImportStatus('error');
+            setTimeout(() => setImportStatus(null), 3000);
+          }
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+      };
+
+      return (
+        <div className="fade-in" style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
+          <div style={{ marginBottom: '32px', paddingTop: '20px' }}>
+            <Button variant="ghost" onClick={onBack} icon={<Icons.Back />} style={{ marginBottom: '16px' }}>
+              Back
+            </Button>
+            <h1 style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)' }}>Settings</h1>
+          </div>
+
+          <Card style={{ marginBottom: '20px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '20px', color: 'var(--accent)' }}>
+              Voice Settings
+            </h3>
+            
+            <Select
+              label="TTS Voice"
+              options={[{ value: '', label: 'Default' }, ...voiceOptions]}
+              value={settings.selectedVoice || ''}
+              onChange={v => onUpdate({ selectedVoice: v || null })}
+            />
+
+            <Slider
+              label="Playback Speed"
+              value={settings.playbackSpeed}
+              onChange={v => onUpdate({ playbackSpeed: v })}
+              min={0.5}
+              max={1.5}
+              step={0.1}
+              suffix="x"
+            />
+          </Card>
+
+          <Card style={{ marginBottom: '20px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '20px', color: 'var(--accent)' }}>
+              Learning Mode
+            </h3>
+            
+            <Slider
+              label="Pause Duration (for repetition)"
+              value={settings.pauseDuration}
+              onChange={v => onUpdate({ pauseDuration: v })}
+              min={2}
+              max={10}
+              step={1}
+              suffix="s"
+            />
+
+            <Slider
+              label="Full Sentence Repetitions"
+              value={settings.repetitions}
+              onChange={v => onUpdate({ repetitions: v })}
+              min={1}
+              max={5}
+              step={1}
+              suffix="x"
+            />
+          </Card>
+
+          <Card style={{ marginBottom: '20px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '20px', color: 'var(--accent)' }}>
+              Recall Mode
+            </h3>
+            
+            <Slider
+              label="Recall Pause Duration"
+              value={settings.recallPauseDuration}
+              onChange={v => onUpdate({ recallPauseDuration: v })}
+              min={3}
+              max={15}
+              step={1}
+              suffix="s"
+            />
+          </Card>
+
+          <Card style={{ marginBottom: '20px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '20px', color: 'var(--accent)' }}>
+              Session
+            </h3>
+
+            <Slider
+              label="Session Length (break reminder)"
+              value={settings.sessionLength}
+              onChange={v => onUpdate({ sessionLength: v })}
+              min={5}
+              max={30}
+              step={5}
+              suffix=" min"
+            />
+          </Card>
+
+          <Card>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px', color: 'var(--accent)' }}>
+              Data
+            </h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginBottom: '16px', lineHeight: 1.5 }}>
+              Export your data to a JSON file, then import it on another device.
+              Save the export to OneDrive to access it from your phone.
+            </p>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <Button variant="primary" onClick={handleExport} style={{ flex: 1 }}>
+                Export Data
+              </Button>
+              <Button variant="default" onClick={() => fileInputRef.current?.click()} style={{ flex: 1 }}>
+                Import Data
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                onChange={handleImport}
+                style={{ display: 'none' }}
+              />
+            </div>
+            {importStatus === 'success' && (
+              <p style={{ color: 'var(--success)', fontSize: '14px', marginTop: '12px' }}>
+                Data imported successfully!
+              </p>
+            )}
+            {importStatus === 'error' && (
+              <p style={{ color: 'var(--danger)', fontSize: '14px', marginTop: '12px' }}>
+                Invalid file. Please select a valid Drive & Learn export.
+              </p>
+            )}
+          </Card>
+        </div>
+      );
+    };
+
+    // Combine Decks View (for playing multiple decks)
+    const CombineView = ({ decks, selectedDecks, setSelectedDecks, settings, onBack, onIncrementPractice }) => {
+      const [mode, setMode] = useState(null);
+      const [isPlaying, setIsPlaying] = useState(false);
+      
+      // Combine all items from selected decks
+      const combinedItems = useMemo(() => {
+        const items = [];
+        selectedDecks.forEach(deckId => {
+          const deck = decks.find(d => d.id === deckId);
+          if (deck) {
+            deck.items.forEach(item => {
+              items.push({ ...item, deckId });
+            });
+          }
+        });
+        return items;
+      }, [selectedDecks, decks]);
+
+      // Create a virtual deck
+      const virtualDeck = {
+        id: 'combined',
+        name: 'Combined Session',
+        items: combinedItems
+      };
+
+      const selectedDeckNames = selectedDecks
+        .map(id => decks.find(d => d.id === id)?.name)
+        .filter(Boolean)
+        .join(', ');
+
+      return (
+        <div className="fade-in" style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
+          <div style={{ marginBottom: '24px', paddingTop: '20px' }}>
+            <Button variant="ghost" onClick={onBack} icon={<Icons.Back />} style={{ marginBottom: '16px' }}>
+              Back
+            </Button>
+            <h1 style={{ fontSize: '24px', fontWeight: 700, marginBottom: '8px' }}>
+              Combined Session
+            </h1>
+            <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
+              {selectedDeckNames}
+            </p>
+            <p style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>
+              {combinedItems.length} total items
+            </p>
+          </div>
+
+          <PlayerView
+            deck={virtualDeck}
+            settings={settings}
+            onBack={onBack}
+            onIncrementPractice={(itemId) => {
+              const item = combinedItems.find(i => i.id === itemId);
+              if (item) onIncrementPractice(item.deckId, itemId);
+            }}
+          />
+        </div>
+      );
+    };
+
+    // Render App
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
