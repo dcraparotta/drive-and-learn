@@ -316,6 +316,12 @@
       }
     };
 
+    // Strip sensitive fields before syncing to gist
+    const stripSyncSecrets = (data) => {
+      const { githubToken, gistId, autoSync, ...safeSettings } = data.settings;
+      return { ...data, settings: safeSettings };
+    };
+
     // ============ TTS HOOK ============
 
     const useTTS = () => {
@@ -788,7 +794,7 @@
         syncTimeoutRef.current = setTimeout(async () => {
           try {
             setSyncStatus('syncing');
-            await gistApi.saveGist(githubToken, gistId, data);
+            await gistApi.saveGist(githubToken, gistId, stripSyncSecrets(data));
             lastSyncedRef.current = dataStr;
             setSyncStatus('success');
             setSyncMessage('Synced');
@@ -848,7 +854,7 @@
         try {
           setSyncStatus('syncing');
           setSyncMessage('Pushing...');
-          await gistApi.saveGist(githubToken, gistId, data);
+          await gistApi.saveGist(githubToken, gistId, stripSyncSecrets(data));
           const dataStr = JSON.stringify({ folders: data.folders, decks: data.decks, progress: data.progress });
           lastSyncedRef.current = dataStr;
           setSyncStatus('success');
@@ -872,7 +878,7 @@
 
           if (!gistId) {
             // Create new gist
-            const gist = await gistApi.createGist(token, data);
+            const gist = await gistApi.createGist(token, stripSyncSecrets(data));
             gistId = gist.id;
           }
 
