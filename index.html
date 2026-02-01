@@ -117,6 +117,69 @@
 <body>
   <div id="root"></div>
 
+  <script>
+    // === PRE-BOOT SYNC ===
+    // Runs before React. Checks URL params or localStorage for sync config,
+    // fetches latest data from GitHub Gist, saves to localStorage, and reloads clean.
+    (function() {
+      var STORAGE_KEY = 'driveAndLearn_v1';
+      var GIST_FILENAME = 'drive-and-learn-data.json';
+
+      // Check URL params first (for initial phone setup)
+      var params = new URLSearchParams(window.location.search);
+      var urlToken = params.get('token');
+      var urlGist = params.get('gist');
+
+      // Or check localStorage for existing credentials
+      var stored = null;
+      try { stored = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch(e) {}
+      var token = urlToken || (stored && stored.settings && stored.settings.githubToken);
+      var gistId = urlGist || (stored && stored.settings && stored.settings.gistId);
+
+      // Skip if no credentials or already synced this session
+      if (!token || !gistId || sessionStorage.getItem('dl_synced')) return;
+      sessionStorage.setItem('dl_synced', '1');
+
+      // Show loading indicator
+      document.getElementById('root').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0a0f;color:#00d4aa;font-family:sans-serif;font-size:18px;">Syncing...</div>';
+
+      // Fetch gist and update localStorage
+      fetch('https://api.github.com/gists/' + gistId, {
+        headers: { 'Authorization': 'token ' + token }
+      })
+      .then(function(res) {
+        if (!res.ok) throw new Error('Gist fetch failed: ' + res.status);
+        return res.json();
+      })
+      .then(function(gist) {
+        var file = gist.files[GIST_FILENAME];
+        if (!file) throw new Error('Data file not found');
+        var remote = JSON.parse(file.content);
+        if (!remote || !remote.decks) throw new Error('Invalid data');
+
+        // Merge: use remote content + preserve/set sync credentials locally
+        remote.settings = remote.settings || {};
+        remote.settings.githubToken = token;
+        remote.settings.gistId = gistId;
+        remote.settings.autoSync = true;
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(remote));
+
+        // Clean URL params if present and reload
+        if (urlToken || urlGist) {
+          window.location.href = window.location.pathname;
+        } else {
+          window.location.reload();
+        }
+      })
+      .catch(function(err) {
+        console.error('Pre-boot sync failed:', err);
+        // Continue loading app normally
+        document.getElementById('root').innerHTML = '';
+      });
+    })();
+  </script>
+
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
@@ -812,7 +875,7 @@
         };
       }, [data]);
 
-      // Pull from Gist (called on app load and manually)
+      // Pull from Gist (manual pull button)
       const pullFromGist = useCallback(async () => {
         const { githubToken, gistId } = data.settings;
         if (!githubToken || !gistId) return;
@@ -820,24 +883,9 @@
         try {
           setSyncStatus('syncing');
           setSyncMessage('Pulling...');
-          const remote = await gistApi.loadGist(githubToken, gistId);
-          if (remote && remote.decks) {
-            // Preserve local sync settings, use everything else from remote
-            const merged = {
-              ...remote,
-              settings: {
-                ...remote.settings,
-                githubToken: data.settings.githubToken,
-                gistId: data.settings.gistId,
-                autoSync: data.settings.autoSync
-              }
-            };
-            // Write directly to localStorage and reload to guarantee clean state
-            saveData(merged);
-            sessionStorage.setItem('dl_pulled', '1');
-            window.location.reload();
-            return;
-          }
+          // Clear session flag so pre-boot sync runs on reload
+          sessionStorage.removeItem('dl_synced');
+          window.location.reload();
         } catch (err) {
           console.error('Pull failed:', err);
           setSyncStatus('error');
@@ -921,14 +969,7 @@
         }
       }, [data]);
 
-      // Pull on first load if sync is configured (once per session)
-      useEffect(() => {
-        const { githubToken, gistId } = data.settings;
-        if (githubToken && gistId && !sessionStorage.getItem('dl_pulled')) {
-          sessionStorage.setItem('dl_pulled', '1');
-          pullFromGist();
-        }
-      }, []); // eslint-disable-line react-hooks/exhaustive-deps
+      // Note: pull-on-load is handled by the pre-boot script above React
 
       const updateSettings = (updates) => {
         setData(prev => ({
@@ -2435,7 +2476,7 @@
               Back
             </Button>
             <h1 style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)' }}>Settings</h1>
-            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>v2.3</p>
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>v3.0</p>
           </div>
 
           <Card style={{ marginBottom: '20px' }}>
