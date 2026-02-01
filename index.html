@@ -775,6 +775,7 @@
       const [syncMessage, setSyncMessage] = useState('');
       const syncTimeoutRef = useRef(null);
       const lastSyncedRef = useRef(null);
+      const justPulledRef = useRef(false);
 
       // Save data whenever it changes
       useEffect(() => {
@@ -785,6 +786,12 @@
       useEffect(() => {
         const { githubToken, gistId, autoSync } = data.settings;
         if (!githubToken || !gistId || !autoSync) return;
+
+        // Skip auto-sync if data was just pulled from remote
+        if (justPulledRef.current) {
+          justPulledRef.current = false;
+          return;
+        }
 
         // Don't sync if data is the same as what we last synced
         const dataStr = JSON.stringify({ folders: data.folders, decks: data.decks, progress: data.progress });
@@ -832,6 +839,7 @@
                 autoSync: data.settings.autoSync
               }
             };
+            justPulledRef.current = true;
             setData(merged);
             lastSyncedRef.current = JSON.stringify({ folders: merged.folders, decks: merged.decks, progress: merged.progress });
             setSyncStatus('success');
